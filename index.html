@@ -14,9 +14,48 @@
       touch-action: none;
     }
     canvas { display: block; }
+
+    /* Message rotation portrait → paysage */
+    #rotate-msg {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+      font-size: 22px;
+      text-align: center;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      gap: 20px;
+    }
+    #rotate-msg span { font-size: 60px; animation: spin 2s linear infinite; }
+    @keyframes spin {
+      0%   { transform: rotate(0deg); }
+      50%  { transform: rotate(90deg); }
+      100% { transform: rotate(90deg); }
+    }
+
+    /* Cacher le jeu en portrait, montrer le message */
+    @media (orientation: portrait) {
+      #rotate-msg { display: flex; }
+      canvas { display: none; }
+    }
+    @media (orientation: landscape) {
+      #rotate-msg { display: none; }
+      canvas { display: block; }
+    }
   </style>
 </head>
 <body>
+  <!-- Message affiché en portrait -->
+  <div id="rotate-msg">
+    <span>📱</span>
+    <p>Tourne ton téléphone<br>pour jouer en paysage</p>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
   <script src="game.js"></script>
 </body>
