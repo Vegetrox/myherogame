@@ -27,10 +27,15 @@ const config = {
   width: W,
   height: H,
   backgroundColor: "#87CEEB",
+  scale: {
+    mode: Phaser.Scale.FIT,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
   physics: {
     default: "arcade",
     arcade: { gravity: { y: 0 }, debug: false }
   },
+  input: { activePointers: 4 },  // multi-touch jusqu'à 4 doigts simultanés
   scene: { preload, create, update }
 };
 
@@ -581,14 +586,8 @@ function buildMobileControls() {
   this.add.text(dashX, dashY, "DASH", {
     fontSize: "18px", fill: "#00ccff", fontStyle: "bold", stroke: "#000", strokeThickness: 2
   }).setOrigin(0.5).setDepth(101);
-  const dashZone = this.add.zone(dashX, dashY, 110, 110).setInteractive().setDepth(102);
-  dashZone.on("pointerdown", () => {
-    if (!started || paused || gameOver) return;
-    dash.call(this);
-    this.tweens.add({ targets: dashBg, alpha: 0.7, duration: 80, yoyo: true });
-  });
-
-  // Bouton LASER
+  // ── Multi-touch : un listener global capte TOUS les doigts ──
+  // Bouton DASH : zone large en bas droite
   const laserX = W - 80;
   const laserY = H - 240;
   const laserBg = this.add.graphics();
@@ -600,11 +599,26 @@ function buildMobileControls() {
   this.add.text(laserX, laserY, "LASER", {
     fontSize: "16px", fill: "#ff4466", fontStyle: "bold", stroke: "#000", strokeThickness: 2
   }).setOrigin(0.5).setDepth(101);
-  const laserZone = this.add.zone(laserX, laserY, 110, 110).setInteractive().setDepth(102);
-  laserZone.on("pointerdown", () => {
+
+  // Listener global multitouch — vérifie tous les pointeurs actifs
+  this.input.on("pointerdown", (pointer) => {
     if (!started || paused || gameOver) return;
-    fireLaser.call(this);
-    this.tweens.add({ targets: laserBg, alpha: 0.7, duration: 80, yoyo: true });
+    const px = pointer.x, py = pointer.y;
+
+    // Zone DASH : cercle bas-droite
+    const dDash = Phaser.Math.Distance.Between(px, py, dashX, dashY);
+    if (dDash < 70) {
+      dash.call(this);
+      this.tweens.add({ targets: dashBg, alpha: 0.7, duration: 80, yoyo: true });
+      return;
+    }
+    // Zone LASER : cercle au-dessus du DASH
+    const dLaser = Phaser.Math.Distance.Between(px, py, laserX, laserY);
+    if (dLaser < 70) {
+      fireLaser.call(this);
+      this.tweens.add({ targets: laserBg, alpha: 0.7, duration: 80, yoyo: true });
+      return;
+    }
   });
 }
 
@@ -756,7 +770,10 @@ function buildHUD() {
       } else if (p.pType === "spiral") {
         p.spiralAngle += p.spiralSpeed * (delta / 1000);
         p.x -= p.spd * (delta / 1000);
-        p.y  = p.spiralOriginY + Math.sin(p.spiralAngle) * p.spiralRadius;
+        // Spirale autour de l'axe Y de départ (indépendant du boss)
+        p.y = p.spiralOriginY + Math.sin(p.spiralAngle) * p.spiralRadius;
+        // Dériver légèrement vers le joueur
+        if (player) p.spiralOriginY += (player.y - p.spiralOriginY) * 0.002;
       } else if (p.pType === "grenade") {
         p.x  -= p.spd * (delta / 1000);
         p.vy += 500 * (delta / 1000);
@@ -895,11 +912,20 @@ function spawnBoss(stage) {
 
   // Entrée par la droite, position fixe X = W*0.78
   this.tweens.add({
-    targets: bossSprite, x: W * 0.78, duration: 1200, ease: "Back.easeOut",
+    targets: bossSprite,
+    x: W * 0.78,
+    duration: 1200,
+    ease: "Back.easeOut",
+    onUpdate: () => {
+      // Pendant l'entrée, déjà commencer à suivre le joueur en Y
+      if (player) {
+        const dy   = player.y - bossSprite.y;
+        bossSprite.y += Math.sign(dy) * Math.min(Math.abs(dy) * 0.12, 8);
+      }
+    },
     onComplete: () => {
       buildBossHPBar.call(this);
       startBossShooting.call(this, stage);
-      // bossTweenY = null : le déplacement Y est géré dans update (suivi joueur)
     }
   });
 }
@@ -930,7 +956,7 @@ function updateBossHPBar() {
 }
 
 // vitesse de suivi Y du boss (pixels/seconde)
-const BOSS_CHASE_SPEED = 220;
+const BOSS_CHASE_SPEED = 320; // px/sec — suivi rapide mais pas miroir
 // stage courant pour le tir (accessible depuis update)
 let _bossStage = null;
 let _bossShootCooldown = 0;
@@ -1047,10 +1073,13 @@ function spawnBossProjectile(x, y, pType, opts) {
     gfx.fillStyle(0xffcc00, 0.9); gfx.fillRect(-50, -3, 100,  6);
     gfx.fillStyle(0xffffff, 0.8); gfx.fillRect(-35, -2,  70,  4);
   } else if (pType === "spiral") {
-    gfx.fillStyle(0x8800ff, 0.9); gfx.fillCircle(0, 0, 18);
-    gfx.fillStyle(0xcc44ff, 0.8); gfx.fillCircle(0, 0, 12);
-    gfx.fillStyle(0xff88ff, 0.7); gfx.fillCircle(0, 0,  7);
-    gfx.fillStyle(0xffffff, 0.9); gfx.fillCircle(0, 0,  3);
+    // Boule violette — couches concentriques
+    gfx.fillStyle(0x6600cc, 1);   gfx.fillCircle(0, 0, 20);
+    gfx.fillStyle(0xaa44ff, 0.9); gfx.fillCircle(0, 0, 14);
+    gfx.fillStyle(0xdd99ff, 0.8); gfx.fillCircle(0, 0,  8);
+    gfx.fillStyle(0xffffff, 1);   gfx.fillCircle(0, 0,  3);
+    // Anneau lumineux
+    gfx.lineStyle(2, 0xcc88ff, 0.6); gfx.strokeCircle(0, 0, 22);
   } else if (pType === "grenade") {
     gfx.fillStyle(0x226622, 1);   gfx.fillCircle(0, 0, 14);
     gfx.fillStyle(0x44aa44, 0.8); gfx.fillCircle(-3, -3, 7);
@@ -1160,19 +1189,20 @@ function spawnPattern() {
     return (now - lastSpawn) > POWERUP_SPAWN_COOLDOWN;
   });
 
-  if (availPow.length > 0 && Math.random() < 0.18) {
-    // Spawn DUO : un power-up + une bulle combo à deux hauteurs différentes
+  // ── Spawn DUO (combo + power-up) — un seul sur l'écran à la fois ──
+  const duoOnScreen = (comboBubbles && comboBubbles.countActive(true) > 0) ||
+                      (powerups    && powerups.countActive(true) > 0);
+
+  if (!duoOnScreen && availPow.length > 0 && Math.random() < 0.22) {
     const pid = availPow[Math.floor(Math.random() * availPow.length)];
     POWERUP_COOLDOWNS[pid] = now;
 
-    // Deux lignes différentes (garantir un écart d'au moins 2 slots)
+    // Deux lignes avec écart garanti
     const rowA = Phaser.Math.Between(0, SPAWN_ROWS.length - 1);
-    let rowB = Phaser.Math.Between(0, SPAWN_ROWS.length - 1);
-    if (Math.abs(rowB - rowA) < 2) rowB = (rowA + 2) % SPAWN_ROWS.length;
-    const pyA = H * SPAWN_ROWS[rowA];
-    const pyB = H * SPAWN_ROWS[rowB];
+    let rowB   = (rowA + 2 + Phaser.Math.Between(0, 1)) % SPAWN_ROWS.length;
+    const pyA  = H * SPAWN_ROWS[rowA];
+    const pyB  = H * SPAWN_ROWS[rowB];
 
-    // Aléatoire : power-up en haut ou en bas
     if (Math.random() < 0.5) {
       spawnPowerupBubble.call(this, baseX, pyA, pid);
       spawnComboBubble.call(this, baseX, pyB);
@@ -1205,15 +1235,11 @@ function spawnPattern() {
 // Groupe physique pour les bulles combo
 let comboBubbles = null; // initialisé dans create()
 
-function getComboLevel() {
-  if (score >= 5000) return 4;
-  if (score >= 1000) return 3;
-  return 2;
-}
-
 function spawnComboBubble(x, y) {
   if (!comboBubbles) return;
-  const level = getComboLevel();
+  // Ne pas spawner si déjà au max
+  if (comboMultiplier >= 4) return;
+  const level = comboMultiplier + 1; // prochain palier
 
   let cb = comboBubbles.getFirstDead(false);
   if (!cb || !cb.body) { cb = comboBubbles.create(x, y, "combo"); }
@@ -1243,12 +1269,19 @@ function spawnComboBubble(x, y) {
   // Bulle décorative
   const bubble = this.add.circle(x, y, 38, 0xffffff, 0.12).setDepth(8);
 
+  const trajAmp2  = Phaser.Math.Between(55, 130);
+  const trajFreq2 = 0.0008 + Math.random() * 0.0015;
+  const trajDrift2= (Math.random() - 0.5) * 0.04;
+
   powerMeta.set(cb, {
-    powerType: "combo_x" + level,
-    comboLevel: level,
-    gridY: y,
-    floatOffset: Math.random() * Math.PI * 2,
-    floatAmplitude: 30,
+    powerType:      "combo_x" + level,
+    comboLevel:     level,
+    gridY:          y,
+    floatOffset:    Math.random() * Math.PI * 2,
+    floatAmplitude: trajAmp2,
+    floatFreq:      trajFreq2,
+    floatDrift:     trajDrift2,
+    floatDir:       Math.random() < 0.5 ? 1 : -1,
     isBubble: true,
     bubble: bubble,
     label: label,
@@ -1265,14 +1298,14 @@ function collectCombo(playerObj, cb) {
   if (meta.label)  { meta.label.destroy();  meta.label  = null; }
   cb.setActive(false).setVisible(false);
 
-  const level = meta.comboLevel || 2;
-  comboMultiplier = level;
+  // Montée d'un cran : x1→x2→x3→x4 (plafond)
+  comboMultiplier = Math.min(comboMultiplier + 1, 4);
+  const level = comboMultiplier;
 
-  // Texte flottant
+  const col = level === 4 ? "#ffdd00" : level === 3 ? "#88ffff" : "#aaffaa";
   showFloatingPoints.call(this, playerObj.x, playerObj.y - 50,
-    "x" + level + " COMBO !", level === 4 ? "#ffdd00" : level === 3 ? "#88ffff" : "#ffffff");
+    "x" + level + " COMBO !", col);
 
-  // Afficher dans le HUD combo
   if (comboText) {
     comboText.setText("x" + level).setAlpha(1).setScale(1);
     this.tweens.add({ targets: comboText, scaleX: 1.3, scaleY: 1.3,
@@ -1302,18 +1335,24 @@ function spawnPowerupBubble(x, y, pid) {
   pu.setScale(0.9);
   pu.clearTint();
 
+  // Trajectoire zigzag imprévisible
+  const trajAmp   = Phaser.Math.Between(55, 130);   // amplitude Y
+  const trajFreq  = 0.0008 + Math.random() * 0.0015; // fréquence sinus
+  const trajDir   = Math.random() < 0.5 ? 1 : -1;   // phase initiale
+  const trajDrift = (Math.random() - 0.5) * 0.04;   // dérive lente Y
+
   powerMeta.set(pu, {
     powerType: pid,
     gridY: y,
-    floatOffset: Math.random() * Math.PI * 2,
-    floatAmplitude: 30,   // ondulation plus ample pour les power-ups
+    floatOffset:    Math.random() * Math.PI * 2,
+    floatAmplitude: trajAmp,
+    floatFreq:      trajFreq,
+    floatDrift:     trajDrift,
+    floatDir:       trajDir,
     isBubble: true
   });
 
-  // Bulle décorative autour du power-up
   const bubble = this.add.circle(x, y, 38, 0xffffff, 0.12).setDepth(8);
-  this.add.circle(x, y, 38, 0x000000, 0).setDepth(8);
-  // Stocker la bulle dans powerMeta pour la déplacer
   const meta = powerMeta.get(pu);
   meta.bubble = bubble;
 
@@ -1461,20 +1500,23 @@ function update(time, delta) {
       if (!item || !item.active) return;
       const meta = metaMap.get(item);
       if (meta) {
-        // Skip flottement si l'item est en cours d'attraction magnétique
         if (!meta.magnetized) {
-          item.y = meta.gridY + Math.sin(_floatTime * 0.002 + meta.floatOffset) * meta.floatAmplitude;
+          // Trajectoire sinusoïdale avec fréquence et dérive propres à chaque item
+          const freq  = meta.floatFreq  || 0.002;
+          const drift = meta.floatDrift || 0;
+          // Dérive Y progressive (déplace gridY lentement)
+          meta.gridY += drift;
+          // Garder dans les limites de l'écran
+          meta.gridY = Phaser.Math.Clamp(meta.gridY, 70, H - 70);
+          item.y = meta.gridY + Math.sin(_floatTime * freq + meta.floatOffset) * meta.floatAmplitude;
         } else {
-          // Mettre à jour gridY pour éviter un saut quand le magnet s'arrête
           meta.gridY = item.y;
         }
-        // Déplacer la bulle avec le power-up
         if (meta.bubble) {
           if (meta.bubble.active !== false) {
             meta.bubble.setPosition(item.x, item.y);
           }
         }
-        // Déplacer le label combo
         if (meta.label) {
           meta.label.setPosition(item.x, item.y - 42);
         }
