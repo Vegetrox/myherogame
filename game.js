@@ -19,8 +19,9 @@
 //    - Vignette FOV (plus sombre)
 // ============================================================
 
-const W = window.innerWidth;
-const H = window.innerHeight;
+// Résolution logique fixe — Phaser scale pour s'adapter à l'écran
+const W = 960;
+const H = 540;
 
 const config = {
   type: Phaser.AUTO,
@@ -30,6 +31,9 @@ const config = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: W,
+    height: H,
+    parent: document.body,
   },
   physics: {
     default: "arcade",
@@ -186,6 +190,7 @@ let bossStageIdx    = -1;     // index du stage courant
 let bossNextIdx     = 0;      // prochain stage à déclencher
 let bossProjectiles = [];     // tableau des projectiles actifs
 let bossInvincible  = false;  // clignotement hit
+let _bossOscTime    = 0;      // compteur oscillation boss
 
 // Parallaxe
 let bgTiles  = [];
@@ -298,9 +303,9 @@ const SHIELD_DURATION = 6000;
 const MAGNET_DURATION = 5000;
 const isMobileDevice  = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
 const PLAYER_SPEED    = isMobileDevice ? 280 : 450;
-const JOY_X           = 130;
-const JOY_Y_OFFSET    = 130;
-const JOY_BASE_R      = 70;
+const JOY_X           = 110;   // px en coordonnées logiques
+const JOY_Y_OFFSET    = 110;
+const JOY_BASE_R      = 60;
 const JOY_THUMB_R     = 32;
 const JOY_DEAD        = 15;
 
@@ -575,13 +580,13 @@ function buildMobileControls() {
   });
 
   // Bouton DASH
-  const dashX = W - 200;
-  const dashY = H - 120;
+  const dashX = W - 160;   // bas-droite en coordonnées logiques
+  const dashY = H - 90;
   const dashBg = this.add.graphics();
   dashBg.fillStyle(0x00ccff, 0.2);
-  dashBg.fillCircle(0, 0, 55);
+  dashBg.fillCircle(0, 0, 45);
   dashBg.lineStyle(3, 0x00ccff, 0.65);
-  dashBg.strokeCircle(0, 0, 55);
+  dashBg.strokeCircle(0, 0, 45);
   dashBg.setPosition(dashX, dashY).setDepth(100);
   this.add.text(dashX, dashY, "DASH", {
     fontSize: "18px", fill: "#00ccff", fontStyle: "bold", stroke: "#000", strokeThickness: 2
@@ -589,12 +594,12 @@ function buildMobileControls() {
   // ── Multi-touch : un listener global capte TOUS les doigts ──
   // Bouton DASH : zone large en bas droite
   const laserX = W - 80;
-  const laserY = H - 240;
+  const laserY = H - 200;
   const laserBg = this.add.graphics();
   laserBg.fillStyle(0xff4466, 0.2);
-  laserBg.fillCircle(0, 0, 55);
+  laserBg.fillCircle(0, 0, 45);
   laserBg.lineStyle(3, 0xff4466, 0.65);
-  laserBg.strokeCircle(0, 0, 55);
+  laserBg.strokeCircle(0, 0, 45);
   laserBg.setPosition(laserX, laserY).setDepth(100);
   this.add.text(laserX, laserY, "LASER", {
     fontSize: "16px", fill: "#ff4466", fontStyle: "bold", stroke: "#000", strokeThickness: 2
@@ -607,14 +612,14 @@ function buildMobileControls() {
 
     // Zone DASH : cercle bas-droite
     const dDash = Phaser.Math.Distance.Between(px, py, dashX, dashY);
-    if (dDash < 70) {
+    if (dDash < 55) {
       dash.call(this);
       this.tweens.add({ targets: dashBg, alpha: 0.7, duration: 80, yoyo: true });
       return;
     }
     // Zone LASER : cercle au-dessus du DASH
     const dLaser = Phaser.Math.Distance.Between(px, py, laserX, laserY);
-    if (dLaser < 70) {
+    if (dLaser < 55) {
       fireLaser.call(this);
       this.tweens.add({ targets: laserBg, alpha: 0.7, duration: 80, yoyo: true });
       return;
@@ -760,8 +765,8 @@ function buildHUD() {
         const step = Math.min(BOSS_CHASE_SPEED * (delta / 1000), Math.abs(dy));
         bossSprite.y += Math.sign(dy) * step;
       } else {
-        // Oscillation lente autour de la position du joueur (boss "vivant")
-        bossSprite.y = player.y + Math.sin(_floatTime * 0.0015) * 25;
+        // Oscillation visible autour de la position du joueur
+        bossSprite.y = player.y + Math.sin(_bossOscTime * 0.003) * 35;
       }
       bossSprite.y = Phaser.Math.Clamp(bossSprite.y, 100, H - 100);
     }
@@ -1173,6 +1178,7 @@ function resetBoss() {
   bossNextIdx    = 0;
   bossStageIdx   = -1;
   bossInvincible = false;
+  _bossOscTime   = 0;
   if (bossShootTimer) { bossShootTimer.remove(); bossShootTimer = null; }
   if (bossTweenY)     { bossTweenY.stop();       bossTweenY     = null; }
   if (bossSprite)     { bossSprite.destroy();     bossSprite     = null; }
@@ -1466,7 +1472,8 @@ function spawnObject(x, y, forcedType) {
 function update(time, delta) {
   if (paused || gameOver) return;
 
-  _floatTime += delta;
+  _floatTime   += delta;
+  _bossOscTime += delta;
 
   // ── Vitesses parallaxe dynamiques ─────────────────────────
   const mSpd  = BASE_SPEED_MOUNTAINS   * speedMult;
