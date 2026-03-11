@@ -754,10 +754,16 @@ function buildHUD() {
   if (bossActive) {
     // ── Suivi Y fluide du boss (60fps avec delta) ─────────────
     if (bossSprite && player) {
-      const dy   = player.y - bossSprite.y;
-      const step = Math.min(BOSS_CHASE_SPEED * (delta / 1000), Math.abs(dy));
-      bossSprite.y += Math.sign(dy) * step;
-      bossSprite.y  = Phaser.Math.Clamp(bossSprite.y, 100, H - 100);
+      const dy = player.y - bossSprite.y;
+      // Suivi direct si loin, oscillation autour du joueur si aligné
+      if (Math.abs(dy) > 15) {
+        const step = Math.min(BOSS_CHASE_SPEED * (delta / 1000), Math.abs(dy));
+        bossSprite.y += Math.sign(dy) * step;
+      } else {
+        // Oscillation lente autour de la position du joueur (boss "vivant")
+        bossSprite.y = player.y + Math.sin(_floatTime * 0.0015) * 25;
+      }
+      bossSprite.y = Phaser.Math.Clamp(bossSprite.y, 100, H - 100);
     }
 
     for (let i = bossProjectiles.length - 1; i >= 0; i--) {
@@ -869,6 +875,12 @@ function startGame() {
   sfxStart.play();
   bgMusic = this.sound.add("music", { loop: true, volume: 0.5 });
   bgMusic.play();
+  // Plein écran sur mobile pour masquer la barre d'adresse
+  if (isMobileDevice && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else if (isMobileDevice && document.documentElement.webkitRequestFullscreen) {
+    document.documentElement.webkitRequestFullscreen();
+  }
 }
 
 // ============================================================
