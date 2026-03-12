@@ -19,22 +19,15 @@
 //    - Vignette FOV (plus sombre)
 // ============================================================
 
-// Résolution logique fixe — Phaser scale pour s'adapter à l'écran
-const W = 960;
-const H = 540;
+const W = window.innerWidth;
+const H = window.innerHeight;
 
 const config = {
   type: Phaser.AUTO,
   width: W,
   height: H,
   backgroundColor: "#87CEEB",
-  scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-    width: W,
-    height: H,
-    parent: document.body,
-  },
+
   physics: {
     default: "arcade",
     arcade: { gravity: { y: 0 }, debug: false }
@@ -340,8 +333,7 @@ function preload() {
   this.load.image("bg_clouds_far",   "assets/parallax/clouds_far.png");
   this.load.image("bg_clouds_near",  "assets/parallax/clouds_near.png");
 
-  this.load.image("boss",     "assets/boss.png");
-  this.load.image("grenade",  "assets/grenade.png");
+
 
   this.load.audio("dash",     "assets/audio/dash.wav");
   this.load.audio("laser",    "assets/audio/laser.wav");
@@ -413,6 +405,14 @@ function create() {
     invincible = !invincible;
     player.setTint(invincible ? 0x00ffcc : 0xffffff);
     console.log("Invincible:", invincible);
+  });
+
+  // ── HACK DEBUG : touche O = +500 points ─────────────────
+  this.input.keyboard.on("keydown-O", () => {
+    if (!started || gameOver) return;
+    score += 500;
+    scoreText.setText("Score: " + score);
+    showFloatingPoints.call(this, player.x, player.y - 40, "+500 🔧", "#ff8800");
   });
 
   this.physics.add.overlap(player, burgers,        collectBurger,    null, this);
@@ -752,63 +752,6 @@ function buildHUD() {
 
   this.add.text(W - 228, 12, "DASH",  { fontSize: "14px", fill: "#aef" }).setDepth(22).setOrigin(1, 0);
   this.add.text(W - 228, 38, "LASER", { fontSize: "14px", fill: "#faa" }).setDepth(22).setOrigin(1, 0);
-
-  drawCooldownBars.call(this, 1, 1);
-
-  // ── Boss projectiles : déplacement + collision joueur ─────
-  if (bossActive) {
-    // ── Suivi Y fluide du boss (60fps avec delta) ─────────────
-    if (bossSprite && player) {
-      const dy = player.y - bossSprite.y;
-      // Suivi direct si loin, oscillation autour du joueur si aligné
-      if (Math.abs(dy) > 15) {
-        const step = Math.min(BOSS_CHASE_SPEED * (delta / 1000), Math.abs(dy));
-        bossSprite.y += Math.sign(dy) * step;
-      } else {
-        // Oscillation visible autour de la position du joueur
-        bossSprite.y = player.y + Math.sin(_bossOscTime * 0.003) * 35;
-      }
-      bossSprite.y = Phaser.Math.Clamp(bossSprite.y, 100, H - 100);
-    }
-
-    for (let i = bossProjectiles.length - 1; i >= 0; i--) {
-      const p = bossProjectiles[i];
-      if (!p || !p.gfx) { bossProjectiles.splice(i, 1); continue; }
-
-      // Déplacement selon type
-      if (p.pType === "straight") {
-        p.x -= p.spd * (delta / 1000);
-      } else if (p.pType === "spiral") {
-        p.spiralAngle += p.spiralSpeed * (delta / 1000);
-        p.x -= p.spd * (delta / 1000);
-        // Spirale autour de l'axe Y de départ (indépendant du boss)
-        p.y = p.spiralOriginY + Math.sin(p.spiralAngle) * p.spiralRadius;
-        // Dériver légèrement vers le joueur
-        if (player) p.spiralOriginY += (player.y - p.spiralOriginY) * 0.002;
-      } else if (p.pType === "grenade") {
-        p.x  -= p.spd * (delta / 1000);
-        p.vy += 500 * (delta / 1000);
-        p.y  += p.vy * (delta / 1000);
-      }
-      p.gfx.setPosition(p.x, p.y);
-
-      // Hors écran → supprimer
-      if (p.x < -80 || p.y > H + 80 || p.y < -80) {
-        p.gfx.destroy();
-        bossProjectiles.splice(i, 1);
-        continue;
-      }
-
-      // Collision avec le joueur
-      const dist = Phaser.Math.Distance.Between(player.x, player.y, p.x, p.y);
-      if (dist < 36 && !invincible) {
-        p.gfx.destroy();
-        bossProjectiles.splice(i, 1);
-        spawnHitSparks.call(this, player.x, player.y, 0xff8800);
-        loseLife.call(this);
-      }
-    }
-  }
 }
 
 function drawCooldownBars(dashFrac, laserFrac) {
@@ -922,27 +865,31 @@ function startBossFight(stage) {
 }
 
 function spawnBoss(stage) {
-  // setFlipX(false) : le boss regarde vers la gauche (vers le joueur)
   bossSprite = this.add.sprite(W + 120, H / 2, "boss")
     .setDisplaySize(360, 400).setDepth(20).setFlipX(false);
   bossSprite.play("boss_fly");
 
-  // Entrée par la droite, position fixe X = W*0.78
-  this.tweens.add({
-    targets: bossSprite,
-    x: W * 0.78,
-    duration: 1200,
-    ease: "Back.easeOut",
-    onUpdate: () => {
-      // Pendant l'entrée, déjà commencer à suivre le joueur en Y
-      if (player) {
-        const dy   = player.y - bossSprite.y;
-        bossSprite.y += Math.sign(dy) * Math.min(Math.abs(dy) * 0.12, 8);
+  // Entrée : déplacer X manuellement via un timer, JAMAIS de tween sur bossSprite
+  const startX  = W + 120;
+  const targetX = W * 0.78;
+  const duration = 1200; // ms
+  let elapsed = 0;
+  const entryTimer = this.time.addEvent({
+    delay: 16, loop: true,
+    callback: () => {
+      if (!bossSprite) { entryTimer.remove(); return; }
+      elapsed += 16;
+      const t = Math.min(elapsed / duration, 1);
+      // easeOutBack
+      const c1 = 1.70158, c3 = c1 + 1;
+      const ease = 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      bossSprite.x = startX + (targetX - startX) * ease;
+      if (elapsed >= duration) {
+        entryTimer.remove();
+        bossSprite.x = targetX;
+        buildBossHPBar.call(this);
+        startBossShooting.call(this, stage);
       }
-    },
-    onComplete: () => {
-      buildBossHPBar.call(this);
-      startBossShooting.call(this, stage);
     }
   });
 }
@@ -953,13 +900,13 @@ function buildBossHPBar() {
   if (bossBarText) bossBarText.destroy();
   bossBarBg = this.add.graphics().setDepth(21);
   bossBarBg.fillStyle(0x330000, 0.85);
-  bossBarBg.fillRoundedRect(W * 0.35, 18, W * 0.4, 22, 8);
-  bossBarBg.lineStyle(2, 0xff4400, 1);
-  bossBarBg.strokeRoundedRect(W * 0.35, 18, W * 0.4, 22, 8);
+  bossBarBg.fillRoundedRect(W * 0.38, 20, W * 0.24, 14, 5);
+  bossBarBg.lineStyle(1, 0xff4400, 1);
+  bossBarBg.strokeRoundedRect(W * 0.38, 20, W * 0.24, 14, 5);
   bossBarFill = this.add.graphics().setDepth(22);
   updateBossHPBar.call(this);
-  bossBarText = this.add.text(W / 2, 29, "👹 BOSS", {
-    fontSize: "14px", fill: "#ffcc00", fontStyle: "bold"
+  bossBarText = this.add.text(W / 2, 27, "👹 BOSS", {
+    fontSize: "11px", fill: "#ffcc00", fontStyle: "bold"
   }).setOrigin(0.5).setDepth(23);
 }
 
@@ -969,7 +916,7 @@ function updateBossHPBar() {
   const ratio = Math.max(0, bossHP / bossMaxHP);
   const color = ratio > 0.6 ? 0x44ff44 : ratio > 0.3 ? 0xffaa00 : 0xff2200;
   bossBarFill.fillStyle(color, 1);
-  bossBarFill.fillRoundedRect(W * 0.35 + 2, 20, (W * 0.4 - 4) * ratio, 18, 6);
+  bossBarFill.fillRoundedRect(W * 0.38 + 1, 21, (W * 0.24 - 2) * ratio, 12, 4);
 }
 
 // vitesse de suivi Y du boss (pixels/seconde)
@@ -1024,10 +971,12 @@ function shootBossPattern(pattern) {
       });
     }
   } else if (pattern === "grenade") {
-    for (let k = 0; k < 2; k++) {
-      this.time.delayedCall(k * 300, () => {
+    // Salve de 4 grenades avec angles variés pour couvrir tout l'écran
+    const angles = [-0.6, -0.25, 0.1, 0.45]; // angles vers la gauche, de haut en bas
+    for (let k = 0; k < 4; k++) {
+      this.time.delayedCall(k * 200, () => {
         if (!bossActive) return;
-        spawnBossProjectile.call(this, bx, by - 30, "grenade");
+        spawnBossProjectile.call(this, bx, by, "grenade", { angle: angles[k] });
       });
     }
   }
@@ -1098,20 +1047,34 @@ function spawnBossProjectile(x, y, pType, opts) {
     // Anneau lumineux
     gfx.lineStyle(2, 0xcc88ff, 0.6); gfx.strokeCircle(0, 0, 22);
   } else if (pType === "grenade") {
-    gfx.fillStyle(0x226622, 1);   gfx.fillCircle(0, 0, 14);
-    gfx.fillStyle(0x44aa44, 0.8); gfx.fillCircle(-3, -3, 7);
+    // Corps vert
+    gfx.fillStyle(0x1a5c1a, 1);   gfx.fillCircle(0, 0, 16);
+    gfx.fillStyle(0x33aa33, 0.9); gfx.fillCircle(-3, -4, 9);
+    gfx.fillStyle(0x55dd55, 0.5); gfx.fillCircle(-5, -6, 5);
+    // Mèche
     gfx.lineStyle(3, 0xffcc00, 1);
-    gfx.beginPath(); gfx.moveTo(6, -10); gfx.lineTo(10, -18); gfx.strokePath();
+    gfx.beginPath(); gfx.moveTo(5, -12); gfx.lineTo(9, -20); gfx.strokePath();
+    gfx.fillStyle(0xff6600, 1); gfx.fillCircle(9, -21, 4);
   }
+
+  // Vitesse directionnelle selon l'angle fourni
+  const angle = opts.angle || 0;
+  const speed = 620 + bossStageIdx * 60;  // beaucoup plus rapide
+  const vx    = -Math.cos(Math.abs(angle) * 0.3 + 0.2) * speed; // toujours vers gauche
+  const vy_init = Math.sin(angle) * speed * 0.7;
+
   gfx.setPosition(x, y);
   bossProjectiles.push({
     gfx, x, y, pType,
-    spd: 380 + bossStageIdx * 40,
+    spd: speed,
+    vx,
+    vy: vy_init,
+    rotation: 0,
+    rotSpeed: (Math.random() > 0.5 ? 1 : -1) * (4 + Math.random() * 4),
     spiralOriginY: y,
     spiralAngle: opts.angle || 0,
     spiralSpeed: 6,
     spiralRadius: opts.radius || 80,
-    vy: -180,
   });
 }
 
@@ -1157,9 +1120,23 @@ function killBoss() {
   this.cameras.main.shake(500, 0.02);
 
   if (bossSprite) {
-    this.tweens.add({
-      targets: bossSprite, y: H + 200, alpha: 0, duration: 900, ease: "Quad.easeIn",
-      onComplete: () => { if (bossSprite) { bossSprite.destroy(); bossSprite = null; } }
+    // Chute sans tween — timer manuel
+    const fallDuration = 900;
+    let fallElapsed = 0;
+    const startY  = bossSprite.y;
+    const fallTimer = this.time.addEvent({
+      delay: 16, loop: true,
+      callback: () => {
+        if (!bossSprite) { fallTimer.remove(); return; }
+        fallElapsed += 16;
+        const t = Math.min(fallElapsed / fallDuration, 1);
+        bossSprite.y     = startY + (H + 200 - startY) * t * t;
+        bossSprite.alpha = 1 - t;
+        if (fallElapsed >= fallDuration) {
+          fallTimer.remove();
+          if (bossSprite) { bossSprite.destroy(); bossSprite = null; }
+        }
+      }
     });
   }
   this.time.delayedCall(800, () => {
@@ -1567,9 +1544,10 @@ function update(time, delta) {
   if (Phaser.Input.Keyboard.JustDown(keyLaser)) fireLaser.call(this);
 
   // ── Limites écran ──────────────────────────────────────────
-  if (player.y < 40)     { player.y = 40;     player.setVelocityY(0); }
-  if (player.y > H - 40) { player.y = H - 40; player.setVelocityY(0); }
-  if (player.x < 60) { player.x = 60; player.setVelocityX(0); }
+  // Limites écran : clamp + annulation vélocité douce (pas de frising)
+  if (player.y < 40)     { player.y = 40;     if (player.body.velocity.y < 0) player.setVelocityY(0); }
+  if (player.y > H - 40) { player.y = H - 40; if (player.body.velocity.y > 0) player.setVelocityY(0); }
+  if (player.x < 60)     { player.x = 60;     if (player.body.velocity.x < 0) player.setVelocityX(0); }
   // Empêcher le joueur de passer derrière le boss
   const bossWall = bossActive && bossSprite ? bossSprite.x - 170 : W - 60;
   if (player.x > bossWall) { player.x = bossWall; player.setVelocityX(0); }
@@ -1605,12 +1583,58 @@ function update(time, delta) {
     });
   }
 
+  // ── Boss : suivi Y + projectiles ──────────────────────────
+  if (bossActive) {
+    if (bossSprite && player) {
+      bossSprite.y += (player.y - bossSprite.y) * (1 - Math.pow(0.01, delta / 1000));
+      bossSprite.y  = Phaser.Math.Clamp(bossSprite.y, 80, H - 80);
+    }
+
+    for (let i = bossProjectiles.length - 1; i >= 0; i--) {
+      const p = bossProjectiles[i];
+      if (!p || !p.gfx) { bossProjectiles.splice(i, 1); continue; }
+
+      if (p.pType === "straight") {
+        p.x -= p.spd * (delta / 1000);
+      } else if (p.pType === "spiral") {
+        p.spiralAngle += p.spiralSpeed * (delta / 1000);
+        p.x -= p.spd * (delta / 1000);
+        p.y  = p.spiralOriginY + Math.sin(p.spiralAngle) * p.spiralRadius;
+        if (player) p.spiralOriginY += (player.y - p.spiralOriginY) * 0.002;
+      } else if (p.pType === "grenade") {
+        // Déplacement avec vx dédié + gravité
+        p.x  += p.vx  * (delta / 1000);
+        p.vy += 480  * (delta / 1000);   // gravité
+        p.y  += p.vy  * (delta / 1000);
+        // Rotation visuelle
+        p.rotation += p.rotSpeed * (delta / 1000);
+        p.gfx.setRotation(p.rotation);
+      }
+      p.gfx.setPosition(p.x, p.y);
+
+      // Hors écran → supprimer
+      if (p.x < -50 || p.y > H + 50) {
+        p.gfx.destroy();
+        bossProjectiles.splice(i, 1);
+        continue;
+      }
+
+      // Collision joueur
+      if (!invincible && player) {
+        const dist = Phaser.Math.Distance.Between(p.x, p.y, player.x, player.y);
+        if (dist < 36) {
+          p.gfx.destroy();
+          bossProjectiles.splice(i, 1);
+          spawnHitSparks.call(this, player.x, player.y, 0xff8800);
+          loseLife.call(this);
+        }
+      }
+    }
+  }
+
   drawCooldownBars.call(this, dashReady ? 1 : 0, laserReady ? 1 : 0);
 }
 
-// ============================================================
-//  NETTOYAGE
-// ============================================================
 function cleanOffscreen(group) {
   group.children.iterate(obj => {
     if (obj && obj.active && obj.x < -150) {
@@ -2323,7 +2347,5 @@ function buildPauseMenu() {
     pauseMenuContainer.add(txt);
   });
 
-  pauseMenuContainer.add(this.add.text(0, 345, "P = reprendre",  {
-    fontSize: "14px", fill: "#666666"
-  }).setOrigin(0.5));
+
 }
